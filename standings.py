@@ -5,6 +5,7 @@ import json
 from bs4 import BeautifulSoup
 import cchardet
 import os
+from decklists import Decklists
 
 class Player:
 	def __init__(self):
@@ -16,25 +17,19 @@ class Player:
 		self.TeamList = None
 		self.DeckList = None
 		self.InternalID = None
-		
 		self.Dropped = 999
 		self.Late = False
 		self.DQed = False
-
 		self.Wins = 0
 		self.Losses = 0
 		self.Ties = 0
 		self.Points = 0
-
 		self.topCutPlayed = 0
 		self.topCutWon = 0
-
 		self.WinPercentage = 0.25
 		self.OppWinPercentage = 0.25
 		self.OppOppWinPercentage = 0.25
-
 		self.Rounds = {}
-
 
 def getPlayerData(soup, table, soupOpp):
 	data = {}
@@ -85,6 +80,7 @@ class Standings:
 	def __init__(self, rk9id, retrieve_decklists):
 		self.RK9_id = rk9id
 		self.Retrieve_decklists = retrieve_decklists
+		self.Decklists = None
 		self.Tournament_started = {}
 		
 		self.Variant = 'TCG2'
@@ -110,13 +106,9 @@ class Standings:
 			self.Rounds_data[pod] = {}
 			self.Rounds_data[pod]['rounds'] = {}
 			self.Rounds_data[pod]['structure'] = {}
-			self.Rounds_data[pod]['structure']['day1'] = 0
-			self.Rounds_data[pod]['structure']['day2'] = 0
-			self.Rounds_data[pod]['structure']['topcut'] = 0
 			self.official_standings[pod] = []
 			self.players[pod] = []
 	
-
 	def GetWinPercentage(self, player, pod, round, round_data, type):
 		start = 0
 		stop = 0
@@ -150,27 +142,31 @@ class Standings:
 			return percentage
 		
 		if(type == 1):#Opps' Win percentage
+			if(player['LastName'] == 'Glath' and round >= 10):
+				a = 2
 			count = 0
 			percentage = 0
-			for r in range(start, stop):
-				if(r in player['Rounds'] and player['Rounds'][r]['bye'] == False and player['Rounds'][r]['late'] == False):
-					pl = self.lookup_table_players[player['Rounds'][r]['opp']]
-					percentage += pl['WinPercentage']
-					count += 1
-			if(count > 0):
-				return percentage/count
+			if(round <= player['Dropped']):
+				for r in range(start, stop):
+					if(r in player['Rounds'] and player['Rounds'][r]['bye'] == False and player['Rounds'][r]['late'] == False):
+						pl = self.lookup_table_players[player['Rounds'][r]['opp']]
+						percentage += pl['WinPercentage']
+						count += 1
+				if(count > 0):
+					return percentage/count
 			return player['OppWinPercentage']
 
 		if(type == 2):#Opps' Opps' Win percentage
 			count = 0
 			percentage = 0
-			for r in range(start, stop):
-				if(r in player['Rounds'] and player['Rounds'][r]['bye'] == False and player['Rounds'][r]['late'] == False):
-					pl = self.lookup_table_players[player['Rounds'][r]['opp']]
-					percentage += pl['OppWinPercentage']
-					count += 1
-			if(count > 0):
-				return percentage/count
+			if(round <= player['Dropped']):
+				for r in range(start, stop):
+					if(r in player['Rounds'] and player['Rounds'][r]['bye'] == False and player['Rounds'][r]['late'] == False):
+						pl = self.lookup_table_players[player['Rounds'][r]['opp']]
+						percentage += pl['OppWinPercentage']
+						count += 1
+				if(count > 0):
+					return percentage/count
 			return player['OppOppWinPercentage']
 		return 0.25
 	
@@ -205,69 +201,53 @@ class Standings:
 				player['OppOppWinPercentage'] = self.GetWinPercentage(player, pod, current_round, rounds_data, 2)
 		self.players[pod] = sorted(self.players[pod], key=lambda k: (k['DQed'], -(k['topCutWon']), -(k['topCutPlayed']), -(k['Points']), (k['Late']), -(round(k['OppWinPercentage'], 4)), -(round(k['OppOppWinPercentage'], 4))))
 
-	def addData(self, pod, p1, p2, table, round, official_standings):
-		player1 = None
-		player2 = None
-		p1InternalID = p2InternalID = 0
-		
+	def addData(self, pod, players_data, table, round, official_standings):
+		players = [None, None]
+		internalIds = [None, None]
+
+		match pod:
+			case '0':
+				division = 'Juniors'
+			case '2':
+				division = 'Masters'
+			case '9':
+				division = 'Seniors'
+
 		for player in self.players[pod]:
-			if(player1 == None and (player['FirstName']+player['LastName']).replace(' ', '') == p1['name'].replace(' ', '')):
-				if(p1['country'] == None or p1['country'] == player['Country']):
-					if(round == 1 or (round-1 in player['Rounds'] and ((p1['result'] == None and player['Rounds'][round-1]['record'] == p1['record']) or (p1['points']-p1['result'] == player['Rounds'][round-1]['points'])))):
-						if(round not in player['Rounds'] or p2['name'] == self.lookup_table_names[player['Rounds'][round]['opp']]):
-							player1 = player
-							p1InternalID = player['InternalID']
-			if(player2 == None and (player['FirstName']+' '+player['LastName']).replace(' ', '') == p2['name'].replace(' ', '')):
-				if(p2['country'] == None or p2['country'] == player['Country']):
-					if(round == 1 or (round-1 in player['Rounds'] and ((p2['result'] == None and player['Rounds'][round-1]['record'] == p2['record']) or (p2['points']-p2['result'] == player['Rounds'][round-1]['points'])))):
-						if(round not in player['Rounds'] or p1['name'] == self.lookup_table_names[player['Rounds'][round]['opp']]):
-							player2 = player
-							p2InternalID = player['InternalID']
-			if(player1 != None and player2 != None):
+			player['Division'] = division
+			for i in range(0,2):
+				if(players[i] == None and (player['FirstName']+player['LastName']).replace(' ', '') == players_data[i]['name'].replace(' ', '')):
+					if(players_data[i]['country'] == None or players_data[i]['country'] == player['Country']):
+						if(round == 1 or (round-1 in player['Rounds'] and ((players_data[i]['result'] == None and player['Rounds'][round-1]['record'] == players_data[i]['record']) or (players_data[i]['points']-players_data[i]['result'] == player['Rounds'][round-1]['points'])))):
+							if(round not in player['Rounds'] or players_data[(i+1)%2]['name'] == self.lookup_table_names[player['Rounds'][round]['opp']]):
+								players[i] = player
+								internalIds[i] = player['InternalID']
+			if(not None in players):
 				break
 		
-		if(player1 == None and round == 1 and p1['name'] != 'BYE' and p1['name'] != 'LATE'):
-			player = Player()
-			player.FirstName = ' '.join(p1['name'].split(' ')[:-1])
-			player.LastName = p1['name'].split(' ')[-1]
-			player.Country = p1['country']
-			player.InternalID = self.last_InternalID
-			self.last_InternalID += 1
-			self.players[pod].append(player.__dict__)
-			player1 = self.players[pod][len(self.players[pod])-1]
-			p1InternalID = player1['InternalID']
-			self.lookup_table_names[p1InternalID] = p1['name']
-		if(player2 == None and round == 1 and p2['name'] != 'BYE' and p2['name'] != 'LATE'):
-			player = Player()
-			player.FirstName = ' '.join(p2['name'].split(' ')[:-1])
-			player.LastName = p2['name'].split(' ')[-1]
-			player.Country = p2['country']
-			player.InternalID = self.last_InternalID
-			self.last_InternalID += 1
-			self.players[pod].append(player.__dict__)
-			player2 = self.players[pod][len(self.players[pod])-1]
-			p2InternalID = player2['InternalID']
-			self.lookup_table_names[p2InternalID] = p2['name']
-		
-		if(player1 != None):
-			if(p1['dropped'] == True):
-				player1['Dropped'] = round
-			if(p1['late'] == True and round == 1):
-				player1['Late'] = True
-			if(len(official_standings[pod])> 0):
-				if(not player1['FirstName']+' '+player1['LastName'] in official_standings[pod]):
-					player1['DQed'] = True
-			player1['Rounds'][round] = {'dropped':p1['dropped'],'opp':p2InternalID,'bye':p1['bye'],'late':p1['late'],'table':table, 'result':p1['result'], 'record':p1['record'], 'points':p1['points']}
-		if(player2 != None):
-			if(p2['dropped'] == True):
-				player2['Dropped'] = round
-			if(p2['late'] == True and round == 1):
-				player2['Late'] = True
-			if(len(official_standings[pod])> 0):
-				if(not player2['FirstName']+' '+player2['LastName'] in official_standings[pod]):
-					player2['DQed'] = True
-				player2['Rounds'][round] = {'dropped':p2['dropped'],'opp':p1InternalID,'bye':p2['bye'],'late':p2['late'],'table':table, 'result':p2['result'], 'record':p2['record'], 'points':p2['points']}
-				
+		for i in range(0,2):
+			if(players[i] == None and round == 1 and players_data[i]['name'] != 'BYE' and players_data[i]['name'] != 'LATE'):
+				player = Player()
+				player.FirstName = ' '.join(players_data[i]['name'].split(' ')[:-1])
+				player.LastName = players_data[i]['name'].split(' ')[-1]
+				player.Country = players_data[i]['country']
+				internalIds[i] = player.InternalID = self.last_InternalID
+				self.last_InternalID += 1
+				self.players[pod].append(player.__dict__)
+				players[i] = self.players[pod][len(self.players[pod])-1]
+				self.lookup_table_names[player.InternalID] = players_data[i]['name']
+
+		for i in range(0,2):
+			if(players[i] != None):
+				if(players_data[i]['dropped'] == True):
+					players[i]['Dropped'] = round
+				if(players_data[i]['late'] == True and round == 1):
+					players[i]['Late'] = True
+				if(len(official_standings[pod])> 0):
+					if(not players[i]['FirstName']+' '+players[i]['LastName'] in official_standings[pod]):
+						players[i]['DQed'] = True
+				players[i]['Rounds'][round] = {'dropped':players_data[i]['dropped'],'opp':internalIds[(i+1)%2],'bye':players_data[i]['bye'],'late':players_data[i]['late'],'table':table, 'result':players_data[i]['result'], 'record':players_data[i]['record'], 'points':players_data[i]['points']}
+
 	def Save(self, pod, round, path):
 		if(not os.path.exists(path)):
 			os.mkdir(path)
@@ -292,136 +272,77 @@ class Standings:
 					f.write(str(counter) + '\tcomputed : ' + p1['FirstName'] + ' ' + p1['LastName'] + '\tofficial : '+ p2 + '\n')
 				counter += 1
 
-
 	def GetRounds(self, content, pod):
 		soup = BeautifulSoup(content, 'lxml')
 		nbPlayers = len(soup.find_all('span', attrs={'class':'name'}))
 		if(self.Variant == 'TCG2' or self.Variant == 'VGC2'):
 			if(4 <= nbPlayers <= 8):
-				self.Rounds_data[pod]['structure']['day1'] = 3
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 0
+				self.Rounds_data[pod]['structure'] = {'day1': 3, 'day2': 0, 'topcut': 0}
 			if(9 <= nbPlayers <= 12):
-				self.Rounds_data[pod]['structure']['day1'] = 4
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 2
+				self.Rounds_data[pod]['structure'] = {'day1': 4, 'day2': 0, 'topcut': 2}
 			if(13 <= nbPlayers <= 20):
-				self.Rounds_data[pod]['structure']['day1'] = 5
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 2
+				self.Rounds_data[pod]['structure'] = {'day1': 5, 'day2': 0, 'topcut': 2}
 			if(21 <= nbPlayers <= 32):
-				self.Rounds_data[pod]['structure']['day1'] = 5
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 5, 'day2': 0, 'topcut': 3}
 			if(33 <= nbPlayers <= 64):
-				self.Rounds_data[pod]['structure']['day1'] = 6
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 6, 'day2': 0, 'topcut': 3}
 			if(65 <= nbPlayers <= 128):
-				self.Rounds_data[pod]['structure']['day1'] = 7
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 7, 'day2': 0, 'topcut': 3}
 			if(129 <= nbPlayers <= 226):
-				self.Rounds_data[pod]['structure']['day1'] = 8
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 8, 'day2': 0, 'topcut': 3}
 			if(227 <= nbPlayers <= 799):
-				self.Rounds_data[pod]['structure']['day1'] = 9
-				self.Rounds_data[pod]['structure']['day2'] = 5
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 9, 'day2': 5, 'topcut': 3}
 			if(nbPlayers >= 800):
-				self.Rounds_data[pod]['structure']['day1'] = 9
-				self.Rounds_data[pod]['structure']['day2'] = 6
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 9, 'day2': 6, 'topcut': 3}
 		if(self.Variant == "TCG1"):
 			if(4 and nbPlayers < 9):
-				self.Rounds_data[pod]['structure']['day1'] = 3
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 0
+				self.Rounds_data[pod]['structure'] = {'day1': 3, 'day2': 0, 'topcut': 0}
 			if(9 <= nbPlayers <= 12):
-				self.Rounds_data[pod]['structure']['day1'] = 4
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 2
+				self.Rounds_data[pod]['structure'] = {'day1': 4, 'day2': 0, 'topcut': 2}
 			if(13 <= nbPlayers <= 20):
-				self.Rounds_data[pod]['structure']['day1'] = 5
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 2
+				self.Rounds_data[pod]['structure'] = {'day1': 5, 'day2': 0, 'topcut': 2}
 			if(21 <= nbPlayers <= 32):
-				self.Rounds_data[pod]['structure']['day1'] = 5
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 5, 'day2': 0, 'topcut': 3}
 			if(33 <= nbPlayers <= 64):
-				self.Rounds_data[pod]['structure']['day1'] = 6
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 6, 'day2': 0, 'topcut': 3}
 			if(65 <= nbPlayers <= 128):
-				self.Rounds_data[pod]['structure']['day1'] = 7
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 7, 'day2': 0, 'topcut': 3}
 			if(129 <= nbPlayers <= 226):
-				self.Rounds_data[pod]['structure']['day1'] = 8
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 8, 'day2': 0, 'topcut': 3}
 			if(227 <= nbPlayers <= 409):
-				self.Rounds_data[pod]['structure']['day1'] = 9
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 9, 'day2': 0, 'topcut': 3}
 			if(410 <= nbPlayers):
-				self.Rounds_data[pod]['structure']['day1'] = 10
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 10, 'day2': 0, 'topcut': 3}
 		if(self.Variant == "VGC1"):
 			if(4 and nbPlayers < 8):
-				self.Rounds_data[pod]['structure']['day1'] = 3
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 0
+				self.Rounds_data[pod]['structure'] = {'day1': 3, 'day2': 0, 'topcut': 0}
 			if(nbPlayers == 8):
-				self.Rounds_data[pod]['structure']['day1'] = 3
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 1
+				self.Rounds_data[pod]['structure'] = {'day1': 3, 'day2': 0, 'topcut': 1}
 			if(9 <= nbPlayers <= 16):
-				self.Rounds_data[pod]['structure']['day1'] = 4
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 2
+				self.Rounds_data[pod]['structure'] = {'day1': 4, 'day2': 0, 'topcut': 2}
 			if(17 <= nbPlayers <= 32):
-				self.Rounds_data[pod]['structure']['day1'] = 5
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 5, 'day2': 0, 'topcut': 3}
 			if(33 <= nbPlayers <= 64):
-				self.Rounds_data[pod]['structure']['day1'] = 6
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 6, 'day2': 0, 'topcut': 3}
 			if(65 <= nbPlayers <= 128):
-				self.Rounds_data[pod]['structure']['day1'] = 7
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 7, 'day2': 0, 'topcut': 3}
 			if(129 <= nbPlayers <= 226):
-				self.Rounds_data[pod]['structure']['day1'] = 8
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 3
+				self.Rounds_data[pod]['structure'] = {'day1': 8, 'day2': 0, 'topcut': 3}
 			if(227 <= nbPlayers <= 256):
-				self.Rounds_data[pod]['structure']['day1'] = 8
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 4
+				self.Rounds_data[pod]['structure'] = {'day1': 8, 'day2': 0, 'topcut': 4}
 			if(257 <= nbPlayers <= 409):
-				self.Rounds_data[pod]['structure']['day1'] = 9
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 4
+				self.Rounds_data[pod]['structure'] = {'day1': 9, 'day2': 0, 'topcut': 4}
 			if(410 <= nbPlayers <= 512):
-				self.Rounds_data[pod]['structure']['day1'] = 9
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 5
+				self.Rounds_data[pod]['structure'] = {'day1': 9, 'day2': 0, 'topcut': 5}
 			if(nbPlayers >= 513):
-				self.Rounds_data[pod]['structure']['day1'] = 10
-				self.Rounds_data[pod]['structure']['day2'] = 0
-				self.Rounds_data[pod]['structure']['topcut'] = 5
+				self.Rounds_data[pod]['structure'] = {'day1': 10, 'day2': 0, 'topcut': 5}
 		for r in range(1, self.Rounds_data[pod]['structure']['day1']+self.Rounds_data[pod]['structure']['day2']+self.Rounds_data[pod]['structure']['topcut']+1):
 			self.Rounds_data[pod]['rounds'][r] = {}
 			self.Rounds_data[pod]['rounds'][r]['data'] = None
 
 	def update(self, standings):
 		if(standings):
-			r = requests.get('https://rk9.gg/pairings/'+self.RK9_id, timeout=60) #check if Masters (P2) round 1 has started yet
+			r = requests.get('https://rk9.gg/pairings/'+self.RK9_id, timeout=60)
 			if(r.status_code == 200):
 				if(len(r.content) > 0):
 					soup = BeautifulSoup(r.content, 'lxml')
@@ -441,7 +362,9 @@ class Standings:
 								for j in range(0, len(s)-country):
 									n += s[j] + ' '
 								n = n.strip()
-								self.official_standings[pod].append(n)		
+								self.official_standings[pod].append(n)
+		if(self.Retrieve_decklists and self.Decklists == None):
+			self.Decklists = Decklists(self.RK9_id)
 		for pod in self.pods:
 			r = None
 			if(not self.Tournament_started[pod]):
@@ -471,15 +394,26 @@ class Standings:
 									tableNumber = divs[1].find('span')
 									if(tableNumber):
 										table = int(tableNumber.text)
-									p1 = getPlayerData(divs[0], table, divs[2])
-									p2 = getPlayerData(divs[2], table, divs[0])
-									self.addData(pod, p1, p2, table, round, self.official_standings)
-									if(tournamentEnded and p1['result'] == None):
+									players_data = [getPlayerData(divs[0], table, divs[2]), getPlayerData(divs[2], table, divs[0])]
+									self.addData(pod, players_data, table, round, self.official_standings)
+									if(tournamentEnded and players_data[0]['result'] == None):
 										tournamentEnded = False
 								self.Compute(pod, round, self.Rounds_data)
-								self.Save(pod, round, 'Standings')
 								if(tournamentEnded):
 									self.CompareStandings(pod, self.official_standings, 'Standings')
+									if(self.Decklists != None):
+										for player in self.players[pod]:
+											deck_index = -1
+											pos = -1
+											for p in self.Decklists.players:
+												pos = pos + 1
+												if(p.Country == player['Country'] and (p.FirstName + ' ' + p.LastName).upper() == (player['FirstName'] + ' ' + player['LastName']).upper() and p.Division == player['Division']):
+													deck_index = pos
+													break
+											if(deck_index != -1):
+												player['DeckList'] = self.Decklists.players[deck_index].json_decklist
+								self.Save(pod, round, 'Standings')
+								
 					end = time.time()
 					print('P'+pod+'R'+str(round)+' treated in : '+str(end - start))
 
@@ -487,17 +421,13 @@ if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
 	parser.add_argument("--id", default='DOR1mfyTo79MGongLsND')
 	parser.add_argument("--decklists", default=False, action="store_true", help="read decklists from /roster/ page")
-	
 	args = parser.parse_args()
-
 	rk9_id = args.id
 	retrieve_decklists = args.decklists
-
+	
 	"""exemple: (Dortmund)
 	--id DOR1mfyTo79MGongLsND --decklists True
 	"""
-
-
 	standings = Standings(rk9_id, retrieve_decklists)
 	starttime = time.time()
 	while True:
